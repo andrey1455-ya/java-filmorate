@@ -16,10 +16,21 @@ public class Film {
     @NotNull
     @NotBlank
     String name;
-    @Size(max = 200, message = "Описание не может быть длиннее 200 символов")
+    @Size(max = 200, message = "Описание фильма не может быть длиннее 200 символов")
     String description;
     LocalDate releaseDate;
     @NotNull
-    @Positive(message = "Продолжительность фильма должна быть положительным числом.")
+    @Positive(message = "Продолжительность фильма должна быть положительным числом")
     Integer duration;
+    Long like = 0L;
+
+    public void incrementLikes() {
+        like++;
+    }
+
+    public void decrementLikes() {
+        if (like > 0) {
+            like--;
+        }
+    }
 }
