@@ -7,7 +7,6 @@ import ru.yandex.practicum.filmorate.exception.ValidationException;
 import ru.yandex.practicum.filmorate.mapper.FilmMapper;
 import ru.yandex.practicum.filmorate.model.Film;
 import ru.yandex.practicum.filmorate.model.Genre;
-import ru.yandex.practicum.filmorate.model.Like;
 import ru.yandex.practicum.filmorate.storage.FilmRepository;
 import ru.yandex.practicum.filmorate.storage.GenreRepository;
 import ru.yandex.practicum.filmorate.storage.LikeRepository;
@@ -19,6 +18,8 @@ import java.util.stream.Collectors;
 @Slf4j
 @Service
 public class FilmService {
+    private static final LocalDate EARLIEST_RELEASE_DATE = LocalDate.of(1895, 12, 28);
+
     private final FilmRepository filmRepository;
     private final LikeRepository likeRepository;
     private final GenreRepository genreRepository;
@@ -77,23 +78,15 @@ public class FilmService {
 
     public List<FilmDto> getPopularFilms(int count) {
         log.info("Запрос на получение {} популярных фильмов", count);
-        List<Film> films = filmRepository.getAllFilms();
+        List<Film> films = filmRepository.getPopularFilms(count);
         enrichFilmsWithGenres(films);
-        films.forEach(film -> {
-            List<Like> likes = likeRepository.findLikesByFilmId(film.getId());
-            film.setLikes(new HashSet<>(likes));
-        });
-        return films.stream()
-                .sorted((a, b) -> b.getLikes().size() - a.getLikes().size())
-                .limit(count)
-                .map(FilmMapper::mapToFilmDto)
-                .collect(Collectors.toList());
+        return films.stream().map(FilmMapper::mapToFilmDto).collect(Collectors.toList());
     }
 
     private void checkReleaseDate(Film film) {
-        if (film.getReleaseDate().isBefore(LocalDate.of(1895, 12, 28))) {
+        if (film.getReleaseDate().isBefore(EARLIEST_RELEASE_DATE)) {
             throw new ValidationException("Дата выхода не может быть раньше " +
-                    "28.12.1895 - даты выхода первого в истории фильма");
+                    EARLIEST_RELEASE_DATE + " - даты выхода первого в истории фильма");
         }
     }
 

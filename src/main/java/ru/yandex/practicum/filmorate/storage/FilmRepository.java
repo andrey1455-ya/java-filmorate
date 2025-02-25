@@ -47,6 +47,15 @@ public class FilmRepository extends BaseRepository<Film> {
             "SELECT COUNT(*) " +
                     "FROM films " +
                     "WHERE id = ?";
+    private static final String FIND_POPULAR_FILMS_QUERY =
+            "SELECT f.*, r.name AS rating_name, COUNT(l.user_id) AS like_count " +
+                    "FROM films f " +
+                    "LEFT JOIN likes l ON f.id = l.film_id " +
+                    "LEFT JOIN ratings r ON f.rating_id = r.id " +
+                    "GROUP BY f.id, r.name " +
+                    "ORDER BY like_count DESC " +
+                    "LIMIT ?";
+
 
     public FilmRepository(JdbcTemplate jdbc, RowMapper<Film> mapper) {
         super(jdbc, mapper, Film.class);
@@ -92,6 +101,10 @@ public class FilmRepository extends BaseRepository<Film> {
         jdbc.update(DELETE_GENRES_BY_FILM_ID, film.getId());
         saveGenres(film);
         return getFilmById(film.getId()).orElseThrow(() -> new NotFoundException(notFound));
+    }
+
+    public List<Film> getPopularFilms(int count) {
+        return findMany(FIND_POPULAR_FILMS_QUERY, count);
     }
 
     private void saveGenres(Film film) {
