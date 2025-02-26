@@ -1,93 +1,104 @@
 package ru.yandex.practicum.filmorate.service;
 
-import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Service;
-import ru.yandex.practicum.filmorate.exception.DuplicatedDataException;
-import ru.yandex.practicum.filmorate.exception.NotFoundException;
+import ru.yandex.practicum.filmorate.dto.FilmDto;
 import ru.yandex.practicum.filmorate.exception.ValidationException;
+import ru.yandex.practicum.filmorate.mapper.FilmMapper;
 import ru.yandex.practicum.filmorate.model.Film;
-import ru.yandex.practicum.filmorate.model.User;
-import ru.yandex.practicum.filmorate.storage.FilmStorage;
-import ru.yandex.practicum.filmorate.storage.UserStorage;
+import ru.yandex.practicum.filmorate.model.Genre;
+import ru.yandex.practicum.filmorate.storage.FilmRepository;
+import ru.yandex.practicum.filmorate.storage.GenreRepository;
+import ru.yandex.practicum.filmorate.storage.LikeRepository;
 
-import java.util.Collection;
-import java.util.List;
+import java.time.LocalDate;
+import java.util.*;
 import java.util.stream.Collectors;
 
 @Slf4j
 @Service
-@RequiredArgsConstructor
 public class FilmService {
-    private final String messageUserNotFound = "Пользователь не найден";
-    private final String messageFilmNotFound = "Фильм не найден";
-    private final FilmStorage filmStorage;
-    private final UserStorage userStorage;
+    private static final LocalDate EARLIEST_RELEASE_DATE = LocalDate.of(1895, 12, 28);
 
-    public Collection<Film> findAllFilms() {
-        return filmStorage.findAllFilms();
+    private final FilmRepository filmRepository;
+    private final LikeRepository likeRepository;
+    private final GenreRepository genreRepository;
+
+    public FilmService(FilmRepository filmRepository, LikeRepository likeRepository, GenreRepository genreRepository) {
+        this.filmRepository = filmRepository;
+        this.likeRepository = likeRepository;
+        this.genreRepository = genreRepository;
     }
 
-    public Film addNewFilm(Film film) {
-        return filmStorage.addNewFilm(film);
-    }
-
-    public Film updateFilm(Film newFilm) {
-        return filmStorage.updateFilm(newFilm);
-    }
-
-    public Film addLike(Long filmId, Long userId) {
-        User user = userStorage.findUserById(userId).orElseThrow(() -> new NotFoundException(messageUserNotFound));
-        Film film = filmStorage.findFilmById(filmId).orElseThrow(() -> new NotFoundException(messageFilmNotFound));
-        if (user.getLikedFilms().contains(filmId)) {
-            log.error("Повторная попытка поставить лайк");
-            throw new DuplicatedDataException("Пользователь уже ставил лайк этому фильму");
-        }
-        user.getLikedFilms().add(filmId);
-        log.debug("Пользователь с id = {} добавил фильм \"{}\" в список понравившихся фильмов",
-                film.getId(),
-                film.getName());
-        film.incrementLikes();
-        log.debug("Количество лайков у фильма \"{}\" увеличено на 1", film.getName());
-        filmStorage.updateLikes(film);
-        userStorage.updateLikes(user);
-        log.info("Фильму \"{}\" поставил лайк пользователь с id = {}", film.getName(), user.getId());
-        return film;
-    }
-
-    public Film deleteLike(Long filmId, Long userId) {
-        User user = userStorage.findUserById(userId).orElseThrow(() -> new NotFoundException(messageUserNotFound));
-        Film film = filmStorage.findFilmById(filmId).orElseThrow(() -> new NotFoundException(messageFilmNotFound));
-        if (user.getLikedFilms().contains(filmId)) {
-            user.getLikedFilms().remove(filmId);
-            log.debug("Пользователь с id = {} удалил фильм \"{}\" из списка понравившихся",
-                    film.getId(),
-                    film.getName());
-            film.decrementLikes();
-            log.debug("Количество лайков у фильма \"{}\" уменьшено на 1", film.getName());
-            filmStorage.updateLikes(film);
-            userStorage.updateLikes(user);
-            log.info("Пользователь id = {} удалил лайк фильму \"{}\"", user.getName(), film.getName());
-        } else {
-            log.error("Попытка удалить лайк фильму, который не был лайкнут");
-            throw new ValidationException("Пользователь не ставил лайк этому фильму");
-        }
-        return film;
-    }
-
-    public List<Film> getPopularFilms(int count) {
-        List<Film> popularFilms = filmStorage
-                .findAllFilms()
-                .stream()
-                .sorted((film1, film2) -> Long.compare(film2.getLike(), film1.getLike()))
-                .limit(count)
+    public List<FilmDto> getAllFilms() {
+        log.info("Запрос на получение всех фильмов");
+        List<Film> films = filmRepository.getAllFilms();
+        enrichFilmsWithGenres(films);
+        return films.stream()
+                .map(FilmMapper::mapToFilmDto)
                 .collect(Collectors.toList());
-        log.debug("Получена коллекция фильмов начиная с 1 и до {} - включительно и записана в переменную", count);
-        if (popularFilms.isEmpty()) {
-            log.error("Попытка получить пустой список популярных фильмов");
-            throw new NotFoundException("Список популярных фильмов пуст");
+    }
+
+    public Optional<FilmDto> findFilmById(Long id) {
+        log.info("Запрос на получение фильма с ID: {}", id);
+        Optional<Film> filmOptional = filmRepository.getFilmById(id);
+        if (filmOptional.isPresent()) {
+            Film film = filmOptional.get();
+            enrichFilmWithGenres(film);
+            return Optional.of(FilmMapper.mapToFilmDto(film));
         }
-        log.info("Пользователем был получен список популярных фильмов  начиная с 1 и до {} - включительно", count);
-        return popularFilms;
+        return Optional.empty();
+    }
+
+    public FilmDto addNewFilm(Film film) {
+        log.info("Запрос на добавление нового фильма: {}", film);
+        checkReleaseDate(film);
+        Film createdFilm = filmRepository.addNewFilm(film);
+        enrichFilmWithGenres(createdFilm);
+        return FilmMapper.mapToFilmDto(createdFilm);
+    }
+
+    public FilmDto updateFilm(Film film) {
+        log.info("Запрос на обновление фильма с ID: {}", film.getId());
+        checkReleaseDate(film);
+        Film updatedFilm = filmRepository.updateFilm(film);
+        enrichFilmWithGenres(updatedFilm);
+        return FilmMapper.mapToFilmDto(updatedFilm);
+    }
+
+    public void addLikeToFilm(Long filmId, Long userId) {
+        log.info("Запрос на добавление лайка фильму с ID: {} от пользователя с ID: {}", filmId, userId);
+        likeRepository.addLike(filmId, userId);
+    }
+
+    public void removeLikeFromFilm(Long filmId, Long userId) {
+        log.info("Запрос на удаление лайка фильму с ID: {} от пользователя с ID: {}", filmId, userId);
+        likeRepository.deleteLike(filmId, userId);
+    }
+
+    public List<FilmDto> getPopularFilms(int count) {
+        log.info("Запрос на получение {} популярных фильмов", count);
+        List<Film> films = filmRepository.getPopularFilms(count);
+        enrichFilmsWithGenres(films);
+        return films.stream().map(FilmMapper::mapToFilmDto).collect(Collectors.toList());
+    }
+
+    private void checkReleaseDate(Film film) {
+        if (film.getReleaseDate().isBefore(EARLIEST_RELEASE_DATE)) {
+            throw new ValidationException("Дата выхода не может быть раньше " +
+                    EARLIEST_RELEASE_DATE + " - даты выхода первого в истории фильма");
+        }
+    }
+
+    private void enrichFilmWithGenres(Film film) {
+        Map<Long, Set<Genre>> genresByFilm = genreRepository.findGenresForFilms(List.of(film.getId()));
+        film.setGenres(genresByFilm.getOrDefault(film.getId(), new LinkedHashSet<>()));
+    }
+
+    private void enrichFilmsWithGenres(List<Film> films) {
+        Map<Long, Set<Genre>> genresByFilm = genreRepository.findGenresForFilms(
+                films.stream().map(Film::getId).collect(Collectors.toList())
+        );
+        films.forEach(film -> film.setGenres(genresByFilm.getOrDefault(film.getId(), new LinkedHashSet<>())));
     }
 }
